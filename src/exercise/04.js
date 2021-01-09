@@ -3,44 +3,63 @@
 
 import React from 'react'
 
-function Board() {
-  // 🐨 squares is the state for this component. Add useState for squares
-  const squares = Array(9).fill(null)
+function useLocalStorageState(key, defaultValue, { serialize = JSON.stringify, deserialize = JSON.parse } = {}) {
+  /**
+   * Use lazy initialization so that interaction to local storage is
+   * is only performed on initial render and not re renders
+   */
+  const [value, setStorageValue] = React.useState(() => {
+    const value = deserialize(window.localStorage.getItem(key))
+    
+    if(value) return value
+    
+    return typeof defaultValue === "function" ? defaultValue() : defaultValue
+  })
 
-  // 🐨 We'll need the following bits of derived state:
-  // - nextValue ('X' or 'O')
-  // - winner ('X', 'O', or null)
-  // - status (`Winner: ${winner}`, `Scratch: Cat's game`, or `Next player: ${nextValue}`)
-  // 💰 I've written the calculations for you! So you can use my utilities
-  // below to create these variables
+  /**
+   * Use useRef to store the key value within the hook, if the key and 
+   * the ref value do not match, remove the local storage item and update the ref
+   * 
+   * Using this approach means that when the ref is updated there is no re render triggered
+   */
+  const prevKeyRef = React.useRef(key)
 
-  // This is the function your square click handler will call. `square` should
-  // be an index. So if they click the center square, this will be `4`.
-  function selectSquare(square) {
-    // 🐨 first, if there's already winner or there's already a value at the
-    // given square index (like someone clicked a square that's already been
-    // clicked), then return early so we don't make any state changes
-    //
-    // 🦉 It's typically a bad idea to mutate or directly change state in React.
-    // Doing so can lead to subtle bugs that can easily slip into production.
-    //
-    // 🐨 make a copy of the squares array 
-    // 💰 `[...squares]` will do it!)
-    //
-    // 🐨 set the value of the square that was selected
-    // 💰 `squaresCopy[square] = nextValue`
-    //
-    // 🐨 set the squares to your copy
-  }
+  React.useEffect(() => {
+    const prevKey = prevKeyRef.current
 
-  function restart() {
-    // 🐨 reset the squares
-    // 💰 `Array(9).fill(null)` will do it!
-  }
+    if (prevKey !== key) {
+      window.localStorage.removeItem(key)
+    }
 
+    prevKeyRef.current = key
+
+    window.localStorage.setItem(key, serialize(value))
+  }, [key, serialize, value])
+
+  return [value, setStorageValue]
+}
+
+function HistoryPanel ({ squaresArray = [], onHistoryChange, historyIndex }) {
+  const buttonText = (index) => index > 0 ? `History item ${index + 1}` : "Reset history"
+
+  return (
+    <ul>
+      {squaresArray.map((_, index) => {
+        return (
+          <li key={index}>
+            <button disabled={index === historyIndex} onClick={() => onHistoryChange(index)}>{buttonText(index)}</button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+
+function Board({ squares, onClick }) {
   function renderSquare(i) {
     return (
-      <button className="square" onClick={() => selectSquare(i)}>
+      <button className="square" onClick={() => onClick(i)}>
         {squares[i]}
       </button>
     )
@@ -48,8 +67,6 @@ function Board() {
 
   return (
     <div>
-      {/* 🐨 put the status in the div below */}
-      <div className="status">STATUS</div>
       <div className="board-row">
         {renderSquare(0)}
         {renderSquare(1)}
@@ -65,18 +82,49 @@ function Board() {
         {renderSquare(7)}
         {renderSquare(8)}
       </div>
-      <button className="restart" onClick={restart}>
-        restart
-      </button>
     </div>
   )
 }
 
 function Game() {
+  const [squaresArray, setSquares] = useLocalStorageState("squares", [...Array(9).fill(null)], {})
+  const [historyIndex, setHistoryIndex] = useLocalStorageState("historyIndex", 0, {})
+
+  const squares = squaresArray[historyIndex]
+  
+  const winner = calculateWinner(squares)
+  const nextValue = calculateNextValue(squares)
+  const status = calculateStatus(winner, squares, nextValue)
+
+  function restart() {
+    setSquares([Array(9).fill(null)])
+    setHistoryIndex(0)
+  }
+
+  function onHistoryChange (i) {
+    setHistoryIndex(i)
+  }
+  
+  function selectSquare(square) {
+    if (winner || !!squares[square]) return
+
+    const newSquares = [...squaresArray, squares.map((value, index) => index === square ? nextValue : value)]
+
+    setSquares(newSquares)
+    setHistoryIndex(newSquares.length - 1)
+  }
+  
   return (
     <div className="game">
       <div className="game-board">
-        <Board />
+        <Board onClick={selectSquare} squares={squares} />
+        <button className="restart" onClick={restart}>
+          restart
+        </button>
+      </div>
+      <div className="game-info">
+        <div>{status}</div>
+        <HistoryPanel squaresArray={squaresArray} onHistoryChange={onHistoryChange} historyIndex={historyIndex} />
       </div>
     </div>
   )
@@ -110,10 +158,12 @@ function calculateWinner(squares) {
     [0, 4, 8],
     [2, 4, 6],
   ]
+  
   for (let i = 0; i < lines.length; i++) {
-    const [a, b, c] = lines[i]
-    if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
-      return squares[a]
+    const allMatch = lines[i].every((item, i) => item[i] === item[0])
+
+    if (allMatch) {
+      return squares[0]
     }
   }
   return null
